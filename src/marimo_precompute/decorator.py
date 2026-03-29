@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Callable, Sequence, Union
 
-import marimo as mo
-
 from marimo_precompute.registry import get_registry
 from marimo_precompute.wasm_store import PrecomputeStore
 
@@ -61,6 +59,8 @@ def persistent_cache(
     # Ensure our loader is registered
     from marimo_precompute.patch import install
     install()
+
+    import marimo as mo
 
     # Default store: PrecomputeStore (public/ convention for WASM bundling)
     if store is None:

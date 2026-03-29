@@ -74,7 +74,7 @@ def _param_key(params: dict) -> str:
 class PrecomputeRegistry:
     """Stores registered functions, their grids, and cached results."""
 
-    def __init__(self, cache_dir: str | Path = "__marimo__/cache"):
+    def __init__(self, cache_dir: str | Path = "public/__marimo_precompute__"):
         self.entries: dict[str, FunctionEntry] = {}
         self.cache_dir = Path(cache_dir)
 
@@ -240,7 +240,7 @@ def _serialize_value(v: Any) -> Any:
 _global_registry: PrecomputeRegistry | None = None
 
 
-def get_registry(cache_dir: str | Path = "__marimo__/cache") -> PrecomputeRegistry:
+def get_registry(cache_dir: str | Path = "public/__marimo_precompute__") -> PrecomputeRegistry:
     """Get or create the global PrecomputeRegistry."""
     global _global_registry
     if _global_registry is None:

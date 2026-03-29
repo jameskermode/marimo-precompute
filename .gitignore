@@ -8,4 +8,6 @@ build/
 __marimo__/
 .precompute_cache/
 examples/data/
+public/
+node_modules/
 .claude/

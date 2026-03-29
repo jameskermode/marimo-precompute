@@ -149,8 +149,8 @@ def main():
     )
     parser.add_argument(
         "--cache-dir",
-        default="__marimo__/cache",
-        help="Directory for cached results (default: __marimo__/cache)",
+        default="public/__marimo_precompute__",
+        help="Directory for cached results (default: public/__marimo_precompute__)",
     )
     parser.add_argument(
         "--time-one",

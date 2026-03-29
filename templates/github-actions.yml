@@ -1,9 +1,12 @@
 # Template GitHub Actions workflow for marimo-precompute
 # Precomputes results, exports notebooks as WASM, deploys to GitHub Pages.
 #
+# Cache files are written to public/__marimo_precompute__/ following
+# marimo's convention (https://docs.marimo.io/guides/wasm/#including-data)
+# and bundled automatically by `marimo export html-wasm`.
+#
 # Customize:
 #   - NOTEBOOKS: list of notebook .py files to export
-#   - PRECOMPUTE_SCRIPT: path to your precompute script (or use CLI)
 #   - EXTRA_DEPS: additional pip packages needed for precomputation
 
 name: Deploy to GitHub Pages
@@ -34,7 +37,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install marimo marimo-precompute
+          pip install marimo
+          pip install git+https://github.com/jameskermode/marimo-precompute.git
           # pip install <your-extra-deps-here>
 
       - name: Dry run (check feasibility)
@@ -48,7 +52,7 @@ jobs:
         run: |
           for nb in notebooks/*.py; do
             echo "=== Precomputing $nb ==="
-            marimo-precompute "$nb" --cache-dir _site/data --max-combinations 50000
+            marimo-precompute "$nb" --max-combinations 50000
           done
 
       - name: Export notebooks to WASM HTML
@@ -62,10 +66,6 @@ jobs:
               --no-show-code \
               -o "_site/${name}.html"
           done
-
-      - name: Copy data files for WASM access
-        run: |
-          cp -r _site/data _site/data || true
 
       - uses: actions/upload-pages-artifact@v3
         with:

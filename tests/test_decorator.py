@@ -44,6 +44,7 @@ def test_register_params_none():
 def test_patch_installed():
     """Importing marimo_precompute should register numpy_json in PERSISTENT_LOADERS."""
     from marimo._save.loaders import PERSISTENT_LOADERS
-    import marimo_precompute  # noqa: F401
+    from marimo_precompute.patch import install
+    install()
 
     assert "numpy_json" in PERSISTENT_LOADERS

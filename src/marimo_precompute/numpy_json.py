@@ -1,20 +1,23 @@
-"""JSON loader with numpy array support, extending marimo's JsonLoader."""
+"""Numpy-aware JSON encoding and decoding.
+
+This module has NO marimo dependency and works standalone in Pyodide.
+The marimo Loader integration (NumpyJsonLoader) lives in patch.py.
+"""
 
 from __future__ import annotations
 
-import dataclasses
 import json
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
-from marimo._save.cache import Cache
-from marimo._save.hash import HashKey
-from marimo._save.loaders.json import JsonLoader
 
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types.
 
-class _NumpyEncoder(json.JSONEncoder):
-    """JSON encoder that handles numpy types."""
+    Arrays are tagged as ``{"__numpy__": true, "data": [...], "dtype": "float64"}``
+    so they can be reconstructed on decode.
+    """
 
     def default(self, obj: Any) -> Any:
         if isinstance(obj, np.ndarray):
@@ -28,34 +31,13 @@ class _NumpyEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def _numpy_object_hook(obj: dict) -> Any:
-    """Reconstruct numpy arrays from JSON."""
+def numpy_object_hook(obj: dict) -> Any:
+    """Reconstruct numpy arrays from JSON produced by NumpyEncoder."""
     if obj.get("__numpy__"):
         return np.array(obj["data"], dtype=obj["dtype"])
     return obj
 
 
-class NumpyJsonLoader(JsonLoader):
-    """JsonLoader that handles numpy arrays via tagged encoding.
-
-    Numpy arrays are serialized as {"__numpy__": true, "data": [...], "dtype": "float64"}
-    and reconstructed on load. All other types use standard JSON encoding.
-    """
-
-    def restore_cache(self, key: HashKey, blob: bytes) -> Cache:
-        del key
-        cache = json.loads(blob, object_hook=_numpy_object_hook)
-        cache["stateful_refs"] = set(cache["stateful_refs"])
-        try:
-            hash_key = cache.pop("key", {})
-            return Cache(**hash_key, **cache)
-        except TypeError as e:
-            from marimo._save.loaders.loader import LoaderError
-            raise LoaderError(
-                "Invalid json object for cache restoration"
-            ) from e
-
-    def to_blob(self, cache: Cache) -> Optional[bytes]:
-        dump = dataclasses.asdict(cache)
-        dump["stateful_refs"] = list(dump["stateful_refs"])
-        return json.dumps(dump, indent=4, cls=_NumpyEncoder).encode("utf-8")
+# Backward compat aliases (used by tests and other modules)
+_NumpyEncoder = NumpyEncoder
+_numpy_object_hook = numpy_object_hook
