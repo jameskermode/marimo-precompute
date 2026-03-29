@@ -7,7 +7,7 @@ _install()
 
 from marimo_precompute.decorator import persistent_cache
 from marimo_precompute.registry import PrecomputeRegistry, get_registry
-from marimo_precompute.wasm_store import WasmStore
+from marimo_precompute.wasm_store import PrecomputeStore
 from marimo_precompute.numpy_json import NumpyJsonLoader
 
 # Backward compat alias
@@ -18,6 +18,6 @@ __all__ = [
     "cached",
     "PrecomputeRegistry",
     "get_registry",
-    "WasmStore",
+    "PrecomputeStore",
     "NumpyJsonLoader",
 ]

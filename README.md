@@ -13,7 +13,7 @@ Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSl
 | Parameter grid declaration | No | `params={"x": [1,2,3]}` |
 | Batch precomputation CLI | No | `marimo-precompute notebook.py` |
 | Dry-run feasibility check | No | `--dry-run` reports grid sizes |
-| WASM loading via HTTP | No | `WasmStore` fetches cache over HTTP |
+| WASM-bundled cache | No | `PrecomputeStore` writes to `public/` |
 
 ## Installation
 
@@ -62,23 +62,28 @@ marimo-precompute notebook.py --dry-run
 marimo-precompute notebook.py
 
 # Custom cache directory
-marimo-precompute notebook.py --cache-dir __marimo__/cache
+marimo-precompute notebook.py --cache-dir public/__marimo_precompute__
 ```
 
 ### WASM deployment
 
-After precomputing, export the notebook as WASM. The `WasmStore` automatically loads cached results via HTTP instead of re-running computations:
+Cache files are written to `public/__marimo_precompute__/` alongside the notebook, following marimo's [convention for including data in WASM notebooks](https://docs.marimo.io/guides/wasm/#including-data). This means `marimo export html-wasm` bundles them automatically:
 
 ```bash
-marimo-precompute notebook.py --cache-dir __marimo__/cache
+# Precompute all parameter combinations
+marimo-precompute notebook.py
+
+# Export — public/ is bundled into the WASM app
 marimo export html-wasm notebook.py -o dist/
 ```
+
+At runtime, the `PrecomputeStore` uses [`mo.notebook_location()`](https://docs.marimo.io/api/notebook_location/) to resolve cache paths, which returns a local filesystem path in native Python and an HTTP URL in WASM/Pyodide.
 
 ## Architecture
 
 A thin integration layer hooking into three marimo extension points:
 
-- **`WasmStore`** — implements marimo's [`Store`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/stores/store.py) ABC. Reads cache via synchronous `XMLHttpRequest` in Pyodide, delegates to `FileStore` in native Python.
+- **`PrecomputeStore`** — implements marimo's [`Store`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/stores/store.py) ABC. Writes to `public/__marimo_precompute__/` in native Python; reads via `mo.notebook_location()` + `XMLHttpRequest` in WASM.
 - **`NumpyJsonLoader`** — extends marimo's [`JsonLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/json.py) with tagged numpy encoding (`{"__numpy__": true, "data": [...], "dtype": "float64"}`).
 - **`persistent_cache`** — wraps `mo.persistent_cache`, adding `params=` for sweep grid registration.
 

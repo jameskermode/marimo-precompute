@@ -1,10 +1,22 @@
-"""A Store that reads from HTTP in WASM (Pyodide) and local filesystem in native Python."""
+"""A Store that uses marimo's public/ convention for WASM-compatible data loading.
+
+Follows the pattern from https://docs.marimo.io/guides/wasm/#including-data:
+- Precomputed cache files are written to ``public/`` alongside the notebook
+- Read via ``mo.notebook_location() / "public" / ...`` which resolves to
+  a local path in native Python and an HTTP URL in WASM/Pyodide
+- ``marimo export html-wasm`` bundles the ``public/`` folder automatically
+"""
 
 from __future__ import annotations
 
+import pathlib
 from typing import Optional
 
 from marimo._save.stores.store import Store
+
+
+# Subdirectory inside public/ for our cache files
+CACHE_SUBDIR = "__marimo_precompute__"
 
 
 def _is_wasm() -> bool:
@@ -15,12 +27,22 @@ def _is_wasm() -> bool:
         return False
 
 
-def _sync_fetch_bytes(url: str) -> Optional[bytes]:
-    """Synchronously fetch bytes from a URL in Pyodide using XMLHttpRequest.
+def _resolve_base_path() -> pathlib.PurePath:
+    """Get the base path for cache files using mo.notebook_location().
 
-    XMLHttpRequest is synchronous in Pyodide web workers, which is what
-    marimo uses. This avoids the async/sync mismatch with Store.get().
+    Returns notebook_location / "public" / CACHE_SUBDIR, which resolves to:
+    - Native: local filesystem path (e.g. /home/user/project/public/__marimo_precompute__/)
+    - WASM: URL (e.g. https://site.com/public/__marimo_precompute__/)
     """
+    import marimo as mo
+    loc = mo.notebook_location()
+    if loc is None:
+        return pathlib.PurePosixPath("public") / CACHE_SUBDIR
+    return loc / "public" / CACHE_SUBDIR
+
+
+def _fetch_bytes_wasm(url: str) -> Optional[bytes]:
+    """Fetch bytes from a URL in Pyodide using synchronous XMLHttpRequest."""
     from js import XMLHttpRequest  # type: ignore[import]
 
     xhr = XMLHttpRequest.new()
@@ -32,8 +54,8 @@ def _sync_fetch_bytes(url: str) -> Optional[bytes]:
     return None
 
 
-def _sync_head(url: str) -> bool:
-    """Synchronously check if a URL exists via HEAD request in Pyodide."""
+def _head_wasm(url: str) -> bool:
+    """Check if a URL exists via synchronous HEAD request in Pyodide."""
     from js import XMLHttpRequest  # type: ignore[import]
 
     xhr = XMLHttpRequest.new()
@@ -42,50 +64,67 @@ def _sync_head(url: str) -> bool:
     return xhr.status == 200
 
 
-class WasmStore(Store):
-    """Store that reads from HTTP in WASM, delegates to FileStore in native.
+class PrecomputeStore(Store):
+    """Store that writes to ``public/__marimo_precompute__/`` for WASM bundling.
 
-    In WASM/Pyodide:
-      - get() fetches cache files via synchronous XMLHttpRequest
-      - put() is a no-op (read-only — cache is pre-built offline)
-      - hit() checks existence via HEAD request
+    In **native Python** (precomputation and local development):
+      - ``put()`` writes cache files to ``public/__marimo_precompute__/``
+        relative to the notebook, so ``marimo export html-wasm`` bundles them.
+      - ``get()``/``hit()`` read from the same local path.
 
-    In native Python:
-      - Delegates all operations to marimo's FileStore
+    In **WASM/Pyodide** (deployed notebook):
+      - ``get()``/``hit()`` use ``mo.notebook_location()`` to resolve the
+        URL of the bundled cache files, then fetch via XMLHttpRequest.
+      - ``put()`` is a no-op (cache is pre-built offline).
     """
 
-    def __init__(
-        self,
-        save_path: Optional[str] = None,
-        base_url: Optional[str] = None,
-    ) -> None:
+    def __init__(self, save_path: Optional[str] = None) -> None:
         self._wasm = _is_wasm()
-        if self._wasm:
-            # In WASM: resolve base URL relative to worker location
-            if base_url is None:
-                from js import self as _js_self  # type: ignore[import]
-                base_url = str(_js_self.location.href).rsplit("/", 2)[0]
-            self._base_url = base_url.rstrip("/")
-        else:
-            from marimo._save.stores.file import FileStore
-            self._file_store = FileStore(save_path)
+        if not self._wasm:
+            # In native mode: write to public/ alongside the notebook
+            if save_path is not None:
+                self._local_root = pathlib.Path(save_path)
+            else:
+                import marimo as mo
+                loc = mo.notebook_dir()
+                if loc is None:
+                    self._local_root = pathlib.Path("public") / CACHE_SUBDIR
+                else:
+                    self._local_root = pathlib.Path(loc) / "public" / CACHE_SUBDIR
+
+    def _local_path(self, key: str) -> pathlib.Path:
+        return self._local_root / key
+
+    def _wasm_url(self, key: str) -> str:
+        return str(_resolve_base_path() / key)
 
     def get(self, key: str) -> Optional[bytes]:
         if self._wasm:
-            return _sync_fetch_bytes(f"{self._base_url}/{key}")
-        return self._file_store.get(key)
+            return _fetch_bytes_wasm(self._wasm_url(key))
+        path = self._local_path(key)
+        if not path.exists() or path.stat().st_size == 0:
+            return None
+        return path.read_bytes()
 
     def put(self, key: str, value: bytes) -> bool:
         if self._wasm:
             return False  # read-only in WASM
-        return self._file_store.put(key, value)
+        path = self._local_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(value)
+        return True
 
     def hit(self, key: str) -> bool:
         if self._wasm:
-            return _sync_head(f"{self._base_url}/{key}")
-        return self._file_store.hit(key)
+            return _head_wasm(self._wasm_url(key))
+        path = self._local_path(key)
+        return path.exists() and path.stat().st_size > 0
 
     def clear(self, key: str) -> bool:
         if self._wasm:
             return False
-        return self._file_store.clear(key)
+        path = self._local_path(key)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True

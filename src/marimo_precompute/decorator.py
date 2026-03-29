@@ -7,7 +7,7 @@ from typing import Any, Callable, Sequence, Union
 import marimo as mo
 
 from marimo_precompute.registry import get_registry
-from marimo_precompute.wasm_store import WasmStore
+from marimo_precompute.wasm_store import PrecomputeStore
 
 
 def persistent_cache(
@@ -43,7 +43,8 @@ def persistent_cache(
     name : str or callable, optional
         For context manager: cache name. For bare decorator: the function.
     save_path : str, optional
-        Cache directory. Defaults to ``__marimo__/cache``.
+        Cache directory. Defaults to ``public/__marimo_precompute__/``
+        alongside the notebook (following marimo's WASM data convention).
     method : str
         Serialization method. Defaults to ``"numpy_json"`` (our extension
         that handles numpy arrays). Also supports ``"json"`` and ``"pickle"``.
@@ -53,18 +54,17 @@ def persistent_cache(
         **New.** Parameter grid for offline precomputation via the sweep CLI.
         Keys are parameter names, values are sequences of values to sweep.
     store : Store, optional
-        Custom store. Defaults to ``WasmStore`` (reads from HTTP in WASM,
-        FileStore in native).
+        Custom store. Defaults to ``PrecomputeStore`` which writes to
+        ``public/__marimo_precompute__/`` (bundled by ``marimo export
+        html-wasm``) and reads via ``mo.notebook_location()`` in WASM.
     """
     # Ensure our loader is registered
     from marimo_precompute.patch import install
     install()
 
-    # Default store: WasmStore (HTTP in WASM, FileStore in native)
-    if store is None and save_path is None:
-        store = WasmStore()
-    elif store is None and save_path is not None:
-        store = WasmStore(save_path=save_path)
+    # Default store: PrecomputeStore (public/ convention for WASM bundling)
+    if store is None:
+        store = PrecomputeStore(save_path=save_path)
 
     # Case 1: Bare decorator — @persistent_cache (name is the function)
     if callable(name):
