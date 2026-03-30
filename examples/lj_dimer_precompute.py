@@ -30,29 +30,41 @@ async def _(prefetch_all):
     return
 
 
-@app.cell
-def _(np):
-    def lj_force(r):
-        """Analytical LJ force at separation r."""
-        return 24.0 * (1.0 / r**7 - 2.0 / r**13)
-
-    r_anal = np.linspace(1.05, 2.5, 500)
-    F_anal = lj_force(r_anal)
-    return F_anal, lj_force, r_anal
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # LJ Dimer: Force-Extension Curve
 
     This notebook computes the force-extension curve for a Lennard-Jones
-    dimer using quasi-static loading and arclength continuation (simulated).
+    dimer using quasi-static loading. Use the sliders to vary the LJ
+    parameters σ (particle size) and ε (well depth).
 
     The computations are wrapped in `persistent_cache` so they can be
     precomputed offline and loaded instantly in WASM.
     """)
     return
+
+
+@app.cell
+def _(mo):
+    sigma_slider = mo.ui.slider(0.8, 1.2, step=0.1, value=1.0, label="σ")
+    eps_slider = mo.ui.slider(0.5, 2.0, step=0.5, value=1.0, label="ε")
+    mo.hstack([sigma_slider, eps_slider])
+    return eps_slider, sigma_slider
+
+
+@app.cell
+def _(eps_slider, np, sigma_slider):
+    sigma = sigma_slider.value
+    eps = eps_slider.value
+
+    def lj_force(r):
+        """Analytical LJ force at separation r."""
+        return 24.0 * eps * (2.0 * (sigma**12) / r**13 - (sigma**6) / r**7)
+
+    r_anal = np.linspace(1.05, 2.5, 500)
+    F_anal = lj_force(r_anal)
+    return F_anal, eps, lj_force, r_anal, sigma
 
 
 @app.cell
@@ -73,27 +85,14 @@ def _(lj_force, np, persistent_cache):
     return (qs_data,)
 
 
-@app.cell
-def _(lj_force, np, persistent_cache):
-    def _run_cont():
-        r_vals = np.linspace(1.05, 2.5, 100)
-        forces = np.array([lj_force(r) for r in r_vals])
-        return {"separations": r_vals, "forces": forces}
-
-    with persistent_cache(name="cont_run"):
-        cont_data = _run_cont()
-    return (cont_data,)
-
-
 @app.cell(hide_code=True)
-def _(F_anal, cont_data, plt, qs_data, r_anal):
+def _(F_anal, plt, qs_data, r_anal, sigma, eps):
     _fig, _ax = plt.subplots(figsize=(7, 5))
     _ax.plot(F_anal, r_anal, "-", lw=4, color="C1", alpha=0.5, label="Analytical")
     _ax.plot(qs_data["forces"], qs_data["separations"], "s", ms=5, color="C2", label="Quasi-static")
-    _ax.plot(cont_data["forces"], cont_data["separations"], "-", lw=1.5, color="C0", label="Continuation")
     _ax.set_xlabel("Applied force F")
     _ax.set_ylabel("Separation r")
-    _ax.set_title("LJ Dimer: Force-Extension Curve")
+    _ax.set_title(f"LJ Dimer: Force-Extension (σ={sigma:.1f}, ε={eps:.1f})")
     _ax.legend()
     _ax.grid(True, alpha=0.3)
     _fig.tight_layout()
