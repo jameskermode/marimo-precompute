@@ -46,6 +46,9 @@ def install() -> None:
                 cache["stateful_refs"] = set(cache["stateful_refs"])
                 # Replace stored hash with the local hash so the
                 # cross-environment integrity check in cache_attempt passes.
+                import sys
+                if cache["hash"] != key.hash:
+                    print(f"[marimo-precompute] patching hash: {cache['hash'][:20]}... -> {key.hash[:20]}...", file=sys.stderr)
                 cache["hash"] = key.hash
                 try:
                     hash_key = cache.pop("key", {})
@@ -54,6 +57,30 @@ def install() -> None:
                     raise LoaderError(
                         "Invalid json object for cache restoration"
                     ) from e
+
+            def cache_attempt(
+                self,
+                defs: set,
+                key: HashKey,
+                stateful_refs: set,
+            ) -> Cache:
+                """Override to skip hash verification for cross-env precompute."""
+                import time
+                start_time = time.time()
+                loaded = self.load_cache(key)
+                if not loaded:
+                    return Cache.empty(defs=defs, key=key, stateful_refs=stateful_refs)
+                load_time = time.time() - start_time
+
+                # Skip hash check — cross-environment precompute produces
+                # different hashes (Python bytecode is version-dependent).
+                if (defs | stateful_refs) != set(loaded.defs):
+                    raise LoaderError("Variable mismatch in loaded cache.")
+                self._hits += 1
+                runtime = loaded.meta.get("runtime", 0)
+                if runtime > 0:
+                    self._time_saved += max(0, runtime - load_time)
+                return Cache.new(loaded=loaded, key=key, stateful_refs=stateful_refs)
 
             def to_blob(self, cache: Cache) -> Optional[bytes]:
                 dump = dataclasses.asdict(cache)
