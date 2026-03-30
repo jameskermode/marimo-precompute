@@ -12,7 +12,7 @@ from marimo_precompute.numpy_json import NumpyEncoder, numpy_object_hook
 # Lazy imports for modules that depend on marimo
 try:
     from marimo_precompute.decorator import persistent_cache
-    from marimo_precompute.wasm_store import PrecomputeStore, prefetch_all
+    from marimo_precompute.wasm_store import PrecomputeStore, prefetch_all, write_manifest
     cached = persistent_cache
 except ImportError:
     # marimo not installed — decorator and store unavailable,
