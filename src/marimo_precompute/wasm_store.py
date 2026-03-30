@@ -41,32 +41,49 @@ def _resolve_base_path() -> pathlib.PurePath:
     return loc / "public" / CACHE_SUBDIR
 
 
-def _fetch_bytes_wasm(url: str) -> Optional[bytes]:
-    """Fetch bytes from a URL in Pyodide.
+_VFS_ROOT = pathlib.Path("/tmp/__marimo_precompute_cache__")
 
-    Uses the Pyodide virtual filesystem as a cache: an async ``prefetch()``
-    downloads files via ``pyfetch`` and writes them to the VFS.  Subsequent
-    sync ``get()`` calls read from the VFS path.
+
+def _cache_name_from_key(key: str) -> Optional[str]:
+    """Extract the cache name (directory) from a store key.
+
+    Keys look like ``demo1_qs/C_abc123.json`` — we want ``demo1_qs``.
     """
-    vfs = _vfs_path_for_url(url)
+    parts = pathlib.PurePosixPath(key).parts
+    # Walk from the end to find the name directory
+    # key may be a full path like public/__marimo_precompute__/demo1_qs/hash.json
+    for i, part in enumerate(parts):
+        if part == CACHE_SUBDIR and i + 1 < len(parts):
+            return parts[i + 1]
+    # Fallback: assume name/hash.json
+    if len(parts) >= 2:
+        return parts[-2]
+    return None
+
+
+def _fetch_bytes_wasm(key: str) -> Optional[bytes]:
+    """Read precomputed cache from the Pyodide VFS by cache name.
+
+    Ignores the hash in the key — looks up by name directory only.
+    This handles cross-environment hash mismatches (e.g. CI Python 3.11
+    vs Pyodide Python 3.12).
+    """
+    name = _cache_name_from_key(key)
+    if name is None:
+        return None
+    vfs = _VFS_ROOT / name / "data.json"
     if vfs.exists() and vfs.stat().st_size > 0:
         return vfs.read_bytes()
     return None
 
 
-def _head_wasm(url: str) -> bool:
-    """Check if a URL exists — looks at the VFS cache."""
-    vfs = _vfs_path_for_url(url)
+def _head_wasm(key: str) -> bool:
+    """Check if a named cache exists on the VFS."""
+    name = _cache_name_from_key(key)
+    if name is None:
+        return False
+    vfs = _VFS_ROOT / name / "data.json"
     return vfs.exists() and vfs.stat().st_size > 0
-
-
-def _vfs_path_for_url(url: str) -> pathlib.Path:
-    """Map a cache URL to a deterministic VFS path."""
-    # URL looks like http://host/public/__marimo_precompute__/name/hash.json
-    # Store under /tmp/__marimo_precompute_cache__/<name>/<hash.json>
-    import hashlib
-    key = hashlib.md5(url.encode()).hexdigest()
-    return pathlib.Path("/tmp/__marimo_precompute_cache__") / key
 
 
 async def prefetch_all() -> None:
@@ -97,10 +114,12 @@ async def prefetch_all() -> None:
         return
 
     for rel_path in manifest.get("files", []):
-        file_url = base + "/" + rel_path
-        vfs = _vfs_path_for_url(file_url)
+        # rel_path looks like "demo1_qs/C_abc123.json"
+        name = str(pathlib.PurePosixPath(rel_path).parent)
+        vfs = _VFS_ROOT / name / "data.json"
         if vfs.exists() and vfs.stat().st_size > 0:
             continue
+        file_url = base + "/" + rel_path
         try:
             resp2 = await pyfetch(file_url)
             data = await resp2.bytes()
