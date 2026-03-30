@@ -34,12 +34,19 @@ def install() -> None:
         from marimo_precompute.numpy_json import NumpyEncoder, numpy_object_hook
 
         class NumpyJsonLoader(JsonLoader):
-            """JsonLoader that handles numpy arrays via tagged encoding."""
+            """JsonLoader that handles numpy arrays via tagged encoding.
+
+            In WASM, the cache may have been produced in a different Python
+            environment (different bytecode hash).  We patch the loaded hash
+            to match the local key so marimo's integrity check passes.
+            """
 
             def restore_cache(self, key: HashKey, blob: bytes) -> Cache:
-                del key
                 cache = json.loads(blob, object_hook=numpy_object_hook)
                 cache["stateful_refs"] = set(cache["stateful_refs"])
+                # Replace stored hash with the local hash so the
+                # cross-environment integrity check in cache_attempt passes.
+                cache["hash"] = key.hash
                 try:
                     hash_key = cache.pop("key", {})
                     return Cache(**hash_key, **cache)
