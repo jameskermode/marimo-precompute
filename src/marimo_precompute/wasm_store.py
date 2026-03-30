@@ -47,10 +47,11 @@ def _fetch_bytes_wasm(url: str) -> Optional[bytes]:
 
     xhr = XMLHttpRequest.new()
     xhr.open("GET", url, False)  # synchronous
-    xhr.responseType = "arraybuffer"
+    # Cannot set responseType on sync XHR in workers; use charset trick
+    xhr.overrideMimeType("text/plain; charset=x-user-defined")
     xhr.send()
     if xhr.status == 200:
-        return bytes(xhr.response.to_py())
+        return bytes(ord(c) & 0xFF for c in xhr.response)
     return None
 
 
