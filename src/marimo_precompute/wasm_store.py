@@ -42,27 +42,49 @@ def _resolve_base_path() -> pathlib.PurePath:
 
 
 def _fetch_bytes_wasm(url: str) -> Optional[bytes]:
-    """Fetch bytes from a URL in Pyodide using synchronous XMLHttpRequest."""
-    from js import XMLHttpRequest  # type: ignore[import]
+    """Fetch bytes from a URL in Pyodide using the marimo WASM transport.
 
-    xhr = XMLHttpRequest.new()
-    xhr.open("GET", url, False)  # synchronous
-    # Cannot set responseType on sync XHR in workers; use charset trick
-    xhr.overrideMimeType("text/plain; charset=x-user-defined")
-    xhr.send()
-    if xhr.status == 200:
-        return bytes(ord(c) & 0xFF for c in xhr.response)
+    marimo's Pyodide environment patches ``open_url`` so that it works
+    from within the web-worker.  We use that, falling back to
+    ``XMLHttpRequest`` if it is unavailable.
+    """
+    try:
+        from pyodide.http import open_url  # type: ignore[import]
+        # open_url returns a StringIO — for JSON payloads this is fine
+        text = open_url(url).read()
+        return text.encode("utf-8")
+    except Exception:
+        pass
+    # Fallback: try sync XHR (may fail in some worker contexts)
+    try:
+        from js import XMLHttpRequest  # type: ignore[import]
+        xhr = XMLHttpRequest.new()
+        xhr.open("GET", url, False)
+        xhr.overrideMimeType("text/plain; charset=x-user-defined")
+        xhr.send()
+        if xhr.status == 200:
+            return bytes(ord(c) & 0xFF for c in xhr.response)
+    except Exception:
+        pass
     return None
 
 
 def _head_wasm(url: str) -> bool:
-    """Check if a URL exists via synchronous HEAD request in Pyodide."""
-    from js import XMLHttpRequest  # type: ignore[import]
-
-    xhr = XMLHttpRequest.new()
-    xhr.open("HEAD", url, False)  # synchronous
-    xhr.send()
-    return xhr.status == 200
+    """Check if a URL exists in Pyodide."""
+    try:
+        from pyodide.http import open_url  # type: ignore[import]
+        open_url(url)
+        return True
+    except Exception:
+        pass
+    try:
+        from js import XMLHttpRequest  # type: ignore[import]
+        xhr = XMLHttpRequest.new()
+        xhr.open("HEAD", url, False)
+        xhr.send()
+        return xhr.status == 200
+    except Exception:
+        return False
 
 
 class PrecomputeStore(Store):
