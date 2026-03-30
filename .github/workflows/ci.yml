@@ -56,3 +56,22 @@ jobs:
 
       - name: Test in Pyodide via Node.js
         run: node tests/test_wasm_pyodide.mjs
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    needs: test-native
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install with E2E dependencies
+        run: pip install -e ".[e2e]"
+
+      - name: Install Playwright browsers
+        run: playwright install chromium
+
+      - name: Run E2E tests
+        run: pytest tests/test_e2e_wasm.py -v --timeout=300

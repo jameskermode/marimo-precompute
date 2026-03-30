@@ -16,6 +16,13 @@ dev = [
     "pytest",
     "marimo",
 ]
+e2e = [
+    "pytest",
+    "pytest-timeout",
+    "marimo",
+    "matplotlib",
+    "playwright",
+]
 
 [project.scripts]
 marimo-precompute = "marimo_precompute.sweep:main"
