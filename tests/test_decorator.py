@@ -1,7 +1,7 @@
 """Tests for persistent_cache wrapper — parameter grid registration."""
 
-from marimo_precompute.registry import PrecomputeRegistry
 from marimo_precompute.decorator import _register_params
+from marimo_precompute.registry import PrecomputeRegistry
 
 
 def test_register_params():
@@ -44,6 +44,7 @@ def test_register_params_none():
 def test_patch_installed():
     """Importing marimo_precompute should register numpy_json in PERSISTENT_LOADERS."""
     from marimo._save.loaders import PERSISTENT_LOADERS
+
     from marimo_precompute.patch import install
     install()
 

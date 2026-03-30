@@ -14,7 +14,6 @@ from typing import Optional
 
 from marimo._save.stores.store import Store
 
-
 # Subdirectory inside public/ for our cache files
 CACHE_SUBDIR = "__marimo_precompute__"
 
@@ -101,8 +100,9 @@ async def prefetch_all() -> None:
     if not _is_wasm():
         return
 
-    from pyodide.http import pyfetch  # type: ignore[import]
     import json
+
+    from pyodide.http import pyfetch  # type: ignore[import]
 
     base = str(_resolve_base_path())
 

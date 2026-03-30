@@ -1,7 +1,6 @@
 """Tests for PrecomputeStore — native mode (local filesystem)."""
 
 import tempfile
-from pathlib import Path
 
 from marimo_precompute.wasm_store import PrecomputeStore
 
