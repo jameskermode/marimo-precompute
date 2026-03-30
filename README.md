@@ -1,6 +1,7 @@
 # marimo-precompute
 
 [![PyPI](https://img.shields.io/pypi/v/marimo-precompute)](https://pypi.org/project/marimo-precompute/)
+[![CI](https://github.com/jameskermode/marimo-precompute/actions/workflows/ci.yml/badge.svg)](https://github.com/jameskermode/marimo-precompute/actions/workflows/ci.yml)
 
 Extends [marimo](https://github.com/marimo-team/marimo)'s [`mo.persistent_cache`](https://docs.marimo.io/api/caching/) with **parameter grid sweeps** and **WASM-compatible loading**, enabling expensive notebook computations to be precomputed offline and served as static WASM apps.
 
