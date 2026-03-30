@@ -1,5 +1,7 @@
 # marimo-precompute
 
+[![PyPI](https://img.shields.io/pypi/v/marimo-precompute)](https://pypi.org/project/marimo-precompute/)
+
 Extends [marimo](https://github.com/marimo-team/marimo)'s [`mo.persistent_cache`](https://docs.marimo.io/api/caching/) with **parameter grid sweeps** and **WASM-compatible loading**, enabling expensive notebook computations to be precomputed offline and served as static WASM apps.
 
 Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSliderServer.jl), which pre-runs Pluto notebooks for all slider combinations and serves results without per-user sessions.
@@ -18,10 +20,17 @@ Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSl
 ## Installation
 
 ```bash
-pip install git+https://github.com/jameskermode/marimo-precompute.git
+pip install marimo-precompute
 ```
 
-Or for development:
+This also works with `micropip` in WASM/Pyodide environments:
+
+```python
+import micropip
+await micropip.install("marimo-precompute")
+```
+
+For development:
 
 ```bash
 git clone https://github.com/jameskermode/marimo-precompute.git
