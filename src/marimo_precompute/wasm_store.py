@@ -42,49 +42,84 @@ def _resolve_base_path() -> pathlib.PurePath:
 
 
 def _fetch_bytes_wasm(url: str) -> Optional[bytes]:
-    """Fetch bytes from a URL in Pyodide using the marimo WASM transport.
+    """Fetch bytes from a URL in Pyodide.
 
-    marimo's Pyodide environment patches ``open_url`` so that it works
-    from within the web-worker.  We use that, falling back to
-    ``XMLHttpRequest`` if it is unavailable.
+    Uses the Pyodide virtual filesystem as a cache: an async ``prefetch()``
+    downloads files via ``pyfetch`` and writes them to the VFS.  Subsequent
+    sync ``get()`` calls read from the VFS path.
     """
-    try:
-        from pyodide.http import open_url  # type: ignore[import]
-        # open_url returns a StringIO — for JSON payloads this is fine
-        text = open_url(url).read()
-        return text.encode("utf-8")
-    except Exception:
-        pass
-    # Fallback: try sync XHR (may fail in some worker contexts)
-    try:
-        from js import XMLHttpRequest  # type: ignore[import]
-        xhr = XMLHttpRequest.new()
-        xhr.open("GET", url, False)
-        xhr.overrideMimeType("text/plain; charset=x-user-defined")
-        xhr.send()
-        if xhr.status == 200:
-            return bytes(ord(c) & 0xFF for c in xhr.response)
-    except Exception:
-        pass
+    vfs = _vfs_path_for_url(url)
+    if vfs.exists() and vfs.stat().st_size > 0:
+        return vfs.read_bytes()
     return None
 
 
 def _head_wasm(url: str) -> bool:
-    """Check if a URL exists in Pyodide."""
+    """Check if a URL exists — looks at the VFS cache."""
+    vfs = _vfs_path_for_url(url)
+    return vfs.exists() and vfs.stat().st_size > 0
+
+
+def _vfs_path_for_url(url: str) -> pathlib.Path:
+    """Map a cache URL to a deterministic VFS path."""
+    # URL looks like http://host/public/__marimo_precompute__/name/hash.json
+    # Store under /tmp/__marimo_precompute_cache__/<name>/<hash.json>
+    import hashlib
+    key = hashlib.md5(url.encode()).hexdigest()
+    return pathlib.Path("/tmp/__marimo_precompute_cache__") / key
+
+
+async def prefetch_all() -> None:
+    """Pre-fetch all precomputed cache files into the Pyodide virtual filesystem.
+
+    Call ``await prefetch_all()`` in an async cell **before** any cells that
+    use ``persistent_cache``.  This downloads every JSON file under
+    ``public/__marimo_precompute__/`` via ``pyfetch`` and writes them to
+    ``/tmp/`` so that the synchronous ``Store.get()`` can read them.
+
+    No-op outside WASM/Pyodide.
+    """
+    if not _is_wasm():
+        return
+
+    from pyodide.http import pyfetch  # type: ignore[import]
+    import json
+
+    base = str(_resolve_base_path())
+
+    # Fetch the directory listing.  Python's http.server returns an HTML page;
+    # we parse href links that look like cache subdirectories.
     try:
-        from pyodide.http import open_url  # type: ignore[import]
-        open_url(url)
-        return True
+        resp = await pyfetch(base + "/")
+        html = await resp.string()
     except Exception:
-        pass
-    try:
-        from js import XMLHttpRequest  # type: ignore[import]
-        xhr = XMLHttpRequest.new()
-        xhr.open("HEAD", url, False)
-        xhr.send()
-        return xhr.status == 200
-    except Exception:
-        return False
+        return
+
+    import re
+    # Links look like <a href="demo1_qs/">demo1_qs/</a>
+    dirs = re.findall(r'href="([^"]+/)"', html)
+
+    for d in dirs:
+        dir_url = base + "/" + d
+        try:
+            resp2 = await pyfetch(dir_url)
+            html2 = await resp2.string()
+        except Exception:
+            continue
+        files = re.findall(r'href="([^"]+\.json)"', html2)
+        for f in files:
+            file_url = dir_url + f
+            full_key = d + f
+            vfs = _vfs_path_for_url(file_url)
+            if vfs.exists() and vfs.stat().st_size > 0:
+                continue
+            try:
+                resp3 = await pyfetch(file_url)
+                data = await resp3.bytes()
+                vfs.parent.mkdir(parents=True, exist_ok=True)
+                vfs.write_bytes(data)
+            except Exception:
+                pass
 
 
 class PrecomputeStore(Store):
