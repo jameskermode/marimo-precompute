@@ -102,7 +102,7 @@ def test_numpy_serialization():
             {"x": [1.0, 2.0]},
         )
 
-        results = reg.sweep(verbose=False)
+        reg.sweep(verbose=False)
 
         # Verify the cache file is valid JSON
         cache_path = Path(tmpdir) / "np_func.json"

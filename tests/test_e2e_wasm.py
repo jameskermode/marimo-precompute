@@ -93,7 +93,7 @@ def test_wasm_notebook_loads_without_errors(wasm_server):
                 f"Timed out waiting for notebook output.\n"
                 f"Console errors ({len(stderr_msgs)}):\n"
                 + "\n".join(stderr_msgs[:20])
-                + f"\n\nLast 30 console messages:\n"
+                + "\n\nLast 30 console messages:\n"
                 + "\n".join(all_msgs)
             )
 
@@ -103,7 +103,7 @@ def test_wasm_notebook_loads_without_errors(wasm_server):
             if "Traceback" in m["text"] or "raise " in m["text"]
         ]
         assert not tracebacks, (
-            f"Python errors in browser console:\n" + "\n".join(tracebacks[:5])
+            "Python errors in browser console:\n" + "\n".join(tracebacks[:5])
         )
 
         # Verify at least one plot rendered (matplotlib outputs base64 images)

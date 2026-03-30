@@ -6,13 +6,13 @@ from marimo_precompute.patch import install as _install
 # (no-op if marimo is not installed, e.g. in Pyodide)
 _install()
 
-from marimo_precompute.registry import PrecomputeRegistry, get_registry
-from marimo_precompute.numpy_json import NumpyEncoder, numpy_object_hook
+from marimo_precompute.numpy_json import NumpyEncoder, numpy_object_hook  # noqa: E402
+from marimo_precompute.registry import PrecomputeRegistry, get_registry  # noqa: E402
 
 # Lazy imports for modules that depend on marimo
 try:
     from marimo_precompute.decorator import persistent_cache
-    from marimo_precompute.wasm_store import PrecomputeStore, prefetch_all, write_manifest
+    from marimo_precompute.wasm_store import PrecomputeStore, prefetch_all
     cached = persistent_cache
 except ImportError:
     # marimo not installed — decorator and store unavailable,

@@ -41,7 +41,7 @@ def _load_notebook(path: str) -> None:
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)
-    except Exception as e:
+    except Exception:
         # Marimo notebooks may fail to fully execute outside marimo runtime,
         # but the @cached decorators at module level should still register.
         # Only warn if the registry is empty.

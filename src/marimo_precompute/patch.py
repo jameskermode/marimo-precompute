@@ -48,7 +48,11 @@ def install() -> None:
                 # cross-environment integrity check in cache_attempt passes.
                 import sys
                 if cache["hash"] != key.hash:
-                    print(f"[marimo-precompute] patching hash: {cache['hash'][:20]}... -> {key.hash[:20]}...", file=sys.stderr)
+                    print(
+                        f"[marimo-precompute] patching hash:"
+                        f" {cache['hash'][:20]}... -> {key.hash[:20]}...",
+                        file=sys.stderr,
+                    )
                 cache["hash"] = key.hash
                 try:
                     hash_key = cache.pop("key", {})
