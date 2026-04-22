@@ -1,30 +1,21 @@
-"""Global registry for precomputed functions and their parameter grids."""
+"""Global registry for precomputed functions and their parameter grids.
+
+The registry only tracks *which* functions have parameter grids and what those
+grids look like — it no longer caches results itself. Result caching is
+delegated to marimo's LazyLoader via ``mo.persistent_cache``: when the CLI
+sweep calls each registered function, the wrapped callable writes cache
+files under ``public/__marimo_precompute__/`` automatically.
+"""
 
 from __future__ import annotations
 
-import json
 from itertools import product
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-import numpy as np
-
-
-class _NumpyEncoder(json.JSONEncoder):
-    """JSON encoder that handles numpy types."""
-
-    def default(self, obj: Any) -> Any:
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        return super().default(obj)
-
 
 class FunctionEntry:
-    """A registered function with its parameter grid and metadata."""
+    """A registered function with its parameter grid."""
 
     __slots__ = ("name", "func", "params", "param_names", "param_values")
 
@@ -57,20 +48,8 @@ class FunctionEntry:
             yield dict(zip(self.param_names, combo))
 
 
-def _param_key(params: dict) -> str:
-    """Deterministic string key for a parameter combination."""
-    # Round floats to avoid floating point noise in keys
-    parts = []
-    for k in sorted(params):
-        v = params[k]
-        if isinstance(v, float):
-            v = round(v, 12)
-        parts.append(f"{k}={v!r}")
-    return ",".join(parts)
-
-
 class PrecomputeRegistry:
-    """Stores registered functions, their grids, and cached results."""
+    """Stores registered functions and their grids."""
 
     def __init__(self, cache_dir: str | Path = "public/__marimo_precompute__"):
         self.entries: dict[str, FunctionEntry] = {}
@@ -86,64 +65,17 @@ class PrecomputeRegistry:
         self.entries[name] = entry
         return entry
 
-    def _cache_path(self, name: str) -> Path:
-        return self.cache_dir / f"{name}.json"
-
-    def load_cache(self, name: str) -> dict[str, Any] | None:
-        """Load cached results for a function. Returns {param_key: result} or None."""
-        path = self._cache_path(name)
-        if not path.exists():
-            return None
-        with open(path) as f:
-            return json.load(f)
-
-    def save_cache(self, name: str, results: dict[str, Any]) -> None:
-        """Save results dict to cache file."""
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        path = self._cache_path(name)
-        with open(path, "w") as f:
-            json.dump(results, f, cls=_NumpyEncoder)
-
-    def lookup(self, name: str, params: dict) -> Any | None:
-        """Look up a single cached result. Returns None if not cached."""
-        cache = self.load_cache(name)
-        if cache is None:
-            return None
-        key = _param_key(params)
-        results = cache.get("results", {})
-        if key not in results:
-            return None
-        return results[key]
-
     def dry_run(self) -> list[dict[str, Any]]:
-        """Report on all registered functions and their grid sizes.
-
-        Returns a list of dicts with keys: name, param_names, grid_sizes,
-        total_combinations, estimated_bytes (if a sample result exists).
-        """
-        reports = []
-        for name, entry in self.entries.items():
-            report: dict[str, Any] = {
+        """Report grid sizes and total combinations for every registered function."""
+        return [
+            {
                 "name": name,
                 "param_names": entry.param_names,
                 "grid_sizes": entry.grid_sizes,
                 "total_combinations": entry.total_combinations,
             }
-
-            # Try to estimate size from a single cached result or by running once
-            cache = self.load_cache(name)
-            if cache and cache.get("results"):
-                sample_key = next(iter(cache["results"]))
-                sample_json = json.dumps(
-                    cache["results"][sample_key], cls=_NumpyEncoder
-                )
-                report["estimated_bytes_per_result"] = len(sample_json.encode())
-                report["estimated_total_bytes"] = (
-                    report["estimated_bytes_per_result"] * entry.total_combinations
-                )
-
-            reports.append(report)
-        return reports
+            for name, entry in self.entries.items()
+        ]
 
     def sweep(
         self,
@@ -151,26 +83,16 @@ class PrecomputeRegistry:
         *,
         max_combinations: int = 10_000,
         verbose: bool = True,
-    ) -> dict[str, dict[str, Any]]:
-        """Run precomputation for registered functions.
+    ) -> dict[str, int]:
+        """Invoke each registered function across its parameter grid.
 
-        Parameters
-        ----------
-        name : str, optional
-            If given, only sweep this function. Otherwise sweep all.
-        max_combinations : int
-            Abort if total combinations exceed this threshold.
-        verbose : bool
-            Print progress.
-
-        Returns
-        -------
-        dict mapping function names to {param_key: result} dicts.
+        The wrapped function (returned by ``persistent_cache``) handles
+        caching transparently: each call either hits an existing cache
+        file or computes-then-writes. Returns a dict mapping function
+        names to the number of combinations invoked.
         """
-        entries = (
-            {name: self.entries[name]} if name else self.entries
-        )
-        all_results = {}
+        entries = {name: self.entries[name]} if name else self.entries
+        counts: dict[str, int] = {}
 
         for func_name, entry in entries.items():
             total = entry.total_combinations
@@ -181,60 +103,18 @@ class PrecomputeRegistry:
                     f"or increase --max-combinations."
                 )
 
-            # Load existing cache to skip already-computed values
-            existing = self.load_cache(func_name)
-            existing_results = existing.get("results", {}) if existing else {}
+            for i, params in enumerate(entry.iter_combinations(), start=1):
+                entry.func(**params)
+                if verbose and (i % 100 == 0 or i == total):
+                    print(f"  {func_name}: {i}/{total}")
 
-            results = dict(existing_results)
-            computed = 0
-            skipped = 0
-
-            for i, params in enumerate(entry.iter_combinations()):
-                key = _param_key(params)
-                if key in results:
-                    skipped += 1
-                    continue
-                result = entry.func(**params)
-                results[key] = result
-                computed += 1
-                if verbose and (computed % 100 == 0 or computed + skipped == total):
-                    print(
-                        f"  {func_name}: {computed + skipped}/{total} "
-                        f"({computed} computed, {skipped} cached)"
-                    )
-
-            cache_data = {
-                "name": func_name,
-                "param_names": entry.param_names,
-                "param_values": [
-                    [_serialize_value(v) for v in vals]
-                    for vals in entry.param_values
-                ],
-                "results": results,
-            }
-            self.save_cache(func_name, cache_data)
-            all_results[func_name] = results
-
+            counts[func_name] = total
             if verbose:
-                print(
-                    f"  {func_name}: done ({computed} computed, "
-                    f"{skipped} cached, {total} total)"
-                )
+                print(f"  {func_name}: done ({total} combinations)")
 
-        return all_results
+        return counts
 
 
-def _serialize_value(v: Any) -> Any:
-    if isinstance(v, np.ndarray):
-        return v.tolist()
-    if isinstance(v, (np.integer,)):
-        return int(v)
-    if isinstance(v, (np.floating,)):
-        return float(v)
-    return v
-
-
-# Global singleton registry
 _global_registry: PrecomputeRegistry | None = None
 
 

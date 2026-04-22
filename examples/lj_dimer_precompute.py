@@ -4,13 +4,13 @@
 #     "marimo",
 #     "numpy",
 #     "matplotlib",
-#     "marimo-precompute>=0.2.3",
+#     "marimo-precompute>=0.3.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.2"
 app = marimo.App()
 
 
@@ -86,7 +86,7 @@ def _(lj_force, np, persistent_cache):
 
 
 @app.cell(hide_code=True)
-def _(F_anal, plt, qs_data, r_anal, sigma, eps):
+def _(F_anal, eps, plt, qs_data, r_anal, sigma):
     _fig, _ax = plt.subplots(figsize=(7, 5))
     _ax.plot(F_anal, r_anal, "-", lw=4, color="C1", alpha=0.5, label="Analytical")
     _ax.plot(qs_data["forces"], qs_data["separations"], "s", ms=5, color="C2", label="Quasi-static")

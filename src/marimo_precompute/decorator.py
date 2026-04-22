@@ -12,7 +12,7 @@ def persistent_cache(
     name: Union[str, Callable, None] = None,
     *,
     save_path: str | None = None,
-    method: str = "numpy_json",
+    method: str = "lazy_precompute",
     pin_modules: bool = False,
     params: dict[str, Sequence] | None = None,
     store: Any = None,
@@ -44,8 +44,11 @@ def persistent_cache(
         Cache directory. Defaults to ``public/__marimo_precompute__/``
         alongside the notebook (following marimo's WASM data convention).
     method : str
-        Serialization method. Defaults to ``"numpy_json"`` (our extension
-        that handles numpy arrays). Also supports ``"json"`` and ``"pickle"``.
+        Serialization method. Defaults to ``"lazy_precompute"`` — our thin
+        subclass of marimo's ``LazyLoader`` that tolerates cross-environment
+        hash mismatches (needed for WASM). ``"lazy"`` is the upstream
+        marimo loader (same formats: ``.npy``/``.arrow``/``.pickle``).
+        ``"pickle"`` and ``"json"`` are also supported.
     pin_modules : bool
         If True, invalidate cache when module versions change.
     params : dict[str, Sequence], optional
@@ -69,15 +72,15 @@ def persistent_cache(
     # Case 1: Bare decorator — @persistent_cache (name is the function)
     if callable(name):
         fn = name
-        _register_params(fn, params)
-        return mo.persistent_cache(
+        wrapped = mo.persistent_cache(
             fn, save_path=save_path, method=method,
             pin_modules=pin_modules, store=store,
         )
+        _register_params(fn.__name__, wrapped, params)
+        return wrapped
 
     # Case 2: Context manager — with persistent_cache(name="..."):
     if isinstance(name, str):
-        # Pass through to marimo's context manager, but with our store/method
         return mo.persistent_cache(
             name, save_path=save_path, method=method,
             pin_modules=pin_modules, store=store,
@@ -85,19 +88,25 @@ def persistent_cache(
 
     # Case 3: Decorator with arguments — @persistent_cache(params={...})
     def decorator(fn: Callable) -> Any:
-        _register_params(fn, params)
-        return mo.persistent_cache(
+        wrapped = mo.persistent_cache(
             fn, save_path=save_path, method=method,
             pin_modules=pin_modules, store=store,
         )
+        _register_params(fn.__name__, wrapped, params)
+        return wrapped
     return decorator
 
 
 def _register_params(
-    fn: Callable,
+    name: str,
+    func: Callable,
     params: dict[str, Sequence] | None,
 ) -> None:
-    """Register a function's parameter grid in the global registry for CLI sweep."""
+    """Register a function's parameter grid in the global registry for CLI sweep.
+
+    ``func`` should be the cache-wrapped callable so the sweep benefits
+    from marimo's caching (hits skip computation, misses write blobs).
+    """
     if params is not None:
         registry = get_registry()
-        registry.register(fn.__name__, fn, params)
+        registry.register(name, func, params)

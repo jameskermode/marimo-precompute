@@ -16,7 +16,7 @@ def test_register_params():
     reg_module._global_registry = registry
 
     try:
-        _register_params(my_func, {"x": [1, 2], "y": [10, 20]})
+        _register_params("my_func", my_func, {"x": [1, 2], "y": [10, 20]})
         assert "my_func" in registry.entries
         assert registry.entries["my_func"].total_combinations == 4
     finally:
@@ -35,17 +35,17 @@ def test_register_params_none():
     reg_module._global_registry = registry
 
     try:
-        _register_params(my_func, None)
+        _register_params("my_func", my_func, None)
         assert "my_func" not in registry.entries
     finally:
         reg_module._global_registry = old
 
 
 def test_patch_installed():
-    """Importing marimo_precompute should register numpy_json in PERSISTENT_LOADERS."""
+    """Importing marimo_precompute should register lazy_precompute in PERSISTENT_LOADERS."""
     from marimo._save.loaders import PERSISTENT_LOADERS
 
     from marimo_precompute.patch import install
     install()
 
-    assert "numpy_json" in PERSISTENT_LOADERS
+    assert "lazy_precompute" in PERSISTENT_LOADERS

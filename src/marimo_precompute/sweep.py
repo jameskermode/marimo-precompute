@@ -107,7 +107,7 @@ def do_sweep(registry, args) -> None:
     t0 = time.time()
 
     try:
-        results = registry.sweep(
+        counts = registry.sweep(
             name=name,
             max_combinations=max_combos,
             verbose=True,
@@ -117,9 +117,13 @@ def do_sweep(registry, args) -> None:
         print("Use --dry-run to inspect, or increase --max-combinations.")
         sys.exit(1)
 
+    # Wait for LazyLoader's background write threads to finish before exit.
+    from marimo_precompute.patch import flush_pending_caches
+    flush_pending_caches()
+
     elapsed = time.time() - t0
-    total = sum(len(v) for v in results.values())
-    print(f"\nDone: {total} results in {elapsed:.1f}s")
+    total = sum(counts.values())
+    print(f"\nDone: {total} combinations in {elapsed:.1f}s")
     print(f"Cache directory: {registry.cache_dir}")
 
 

@@ -6,6 +6,8 @@
 
 Extends [marimo](https://github.com/marimo-team/marimo)'s [`mo.persistent_cache`](https://docs.marimo.io/api/caching/) with **parameter grid sweeps** and **WASM-compatible loading**, enabling expensive notebook computations to be precomputed offline and served as static WASM apps.
 
+Result serialization is delegated to marimo's built-in [`LazyLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/lazy.py), which handles numpy arrays (`.npy`), Arrow tables, and falls back to pickle.
+
 Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSliderServer.jl), which pre-runs Pluto notebooks for all slider combinations and serves results without per-user sessions.
 
 ## What this adds over `mo.persistent_cache`
@@ -13,11 +15,11 @@ Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSl
 | Feature | `mo.persistent_cache` | `marimo-precompute` |
 |---|---|---|
 | Cache to disk | Yes | Yes (delegates to marimo) |
-| Numpy array serialization | No (JSON fails on arrays) | Yes (`NumpyJsonLoader`) |
 | Parameter grid declaration | No | `params={"x": [1,2,3]}` |
 | Batch precomputation CLI | No | `marimo-precompute notebook.py` |
 | Dry-run feasibility check | No | `--dry-run` reports grid sizes |
 | WASM-bundled cache | No | `PrecomputeStore` writes to `public/` |
+| Cross-env hash tolerance | No (integrity check fails) | `LazyPrecomputeLoader` skips hash check |
 
 ## Installation
 
@@ -94,11 +96,11 @@ At runtime, the `PrecomputeStore` uses [`mo.notebook_location()`](https://docs.m
 
 A thin integration layer hooking into three marimo extension points:
 
-- **`PrecomputeStore`** — implements marimo's [`Store`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/stores/store.py) ABC. Writes to `public/__marimo_precompute__/` in native Python; reads via `mo.notebook_location()` + `XMLHttpRequest` in WASM.
-- **`NumpyJsonLoader`** — extends marimo's [`JsonLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/json.py) with tagged numpy encoding (`{"__numpy__": true, "data": [...], "dtype": "float64"}`).
-- **`persistent_cache`** — wraps `mo.persistent_cache`, adding `params=` for sweep grid registration.
+- **`PrecomputeStore`** — implements marimo's [`Store`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/stores/store.py) ABC. Writes to `public/__marimo_precompute__/` in native Python; reads from a Pyodide VFS populated by `prefetch_all()` in WASM.
+- **`LazyPrecomputeLoader`** — a thin subclass of marimo's [`LazyLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/lazy.py) that skips the bytecode-hash integrity check, so caches produced in native CPython can be loaded in Pyodide. All serialization (npy/arrow/pickle) is inherited from upstream.
+- **`persistent_cache`** — wraps `mo.persistent_cache`, adding `params=` for sweep grid registration and defaulting `method="lazy_precompute"`.
 
-On `import marimo_precompute`, the `NumpyJsonLoader` is registered in marimo's `PERSISTENT_LOADERS` as `"numpy_json"`.
+On `import marimo_precompute`, `LazyPrecomputeLoader` is registered in marimo's `PERSISTENT_LOADERS` as `"lazy_precompute"`.
 
 ## Related marimo issues
 
