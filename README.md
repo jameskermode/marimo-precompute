@@ -19,7 +19,7 @@ Inspired by Julia's [PlutoSliderServer.jl](https://github.com/JuliaPluto/PlutoSl
 | Batch precomputation CLI | No | `marimo-precompute notebook.py` |
 | Dry-run feasibility check | No | `--dry-run` reports grid sizes |
 | WASM-bundled cache | No | `PrecomputeStore` writes to `public/` |
-| Cross-env hash tolerance | No (integrity check fails) | `LazyPrecomputeLoader` skips hash check |
+| WASM/Pyodide runtime compatibility | Breaks on thread spawn, hash mismatch, and struct drift | `LazyPrecomputeLoader` patches all three (see [#9327](https://github.com/marimo-team/marimo/issues/9327)) |
 
 ## Installation
 
@@ -60,9 +60,9 @@ def run_simulation(force, temperature):
 All three `mo.persistent_cache` forms are supported:
 
 ```python
-@persistent_cache                              # bare decorator
-@persistent_cache(method="json")               # with args
-with persistent_cache(name="my_block"): ...    # context manager
+@persistent_cache                                # bare decorator
+@persistent_cache(params={"x": [1, 2, 3]})       # with args
+with persistent_cache(name="my_block"): ...      # context manager
 ```
 
 ### Precompute CLI
@@ -97,13 +97,14 @@ At runtime, the `PrecomputeStore` uses [`mo.notebook_location()`](https://docs.m
 A thin integration layer hooking into three marimo extension points:
 
 - **`PrecomputeStore`** — implements marimo's [`Store`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/stores/store.py) ABC. Writes to `public/__marimo_precompute__/` in native Python; reads from a Pyodide VFS populated by `prefetch_all()` in WASM.
-- **`LazyPrecomputeLoader`** — a thin subclass of marimo's [`LazyLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/lazy.py) that skips the bytecode-hash integrity check, so caches produced in native CPython can be loaded in Pyodide. All serialization (npy/arrow/pickle) is inherited from upstream.
+- **`LazyPrecomputeLoader`** — a thin subclass of marimo's [`LazyLoader`](https://github.com/marimo-team/marimo/blob/main/marimo/_save/loaders/lazy.py) adapted for Pyodide: skips the bytecode-hash check (so native→WASM loading works), replaces `restore_cache` with a sequential blob loader and guards `save_cache` (Pyodide refuses `Thread.start()`), and inlines a small blob deserializer so the same wheel runs against marimo 0.23.1 and 0.23.2+. See [#9327](https://github.com/marimo-team/marimo/issues/9327) for the upstream asks.
 - **`persistent_cache`** — wraps `mo.persistent_cache`, adding `params=` for sweep grid registration and defaulting `method="lazy_precompute"`.
 
 On `import marimo_precompute`, `LazyPrecomputeLoader` is registered in marimo's `PERSISTENT_LOADERS` as `"lazy_precompute"`.
 
 ## Related marimo issues
 
+- [#9327 — Cross-environment static cache hosting for WASM](https://github.com/marimo-team/marimo/issues/9327) *(our tracking issue: upstreaming this package's hacks)*
 - [#5535 — Automatically bundling data into WASM notebooks](https://github.com/marimo-team/marimo/issues/5535)
 - [#3194 — Recommendations for including data in WASM notebooks](https://github.com/marimo-team/marimo/issues/3194)
 - [#7849 — Add cached outputs to run mode](https://github.com/marimo-team/marimo/issues/7849)
