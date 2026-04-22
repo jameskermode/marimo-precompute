@@ -26,8 +26,9 @@ def install() -> None:
         return
     _installed = True
 
+    import sys
+
     try:
-        import sys
         import time
 
         from marimo._save.cache import Cache
@@ -77,8 +78,22 @@ def install() -> None:
 
         PERSISTENT_LOADERS["lazy_precompute"] = LazyPrecomputeLoader
 
-    except ImportError:
-        pass
+        try:
+            from importlib.metadata import version as _pkg_version
+            _ver = _pkg_version("marimo-precompute")
+        except Exception:
+            _ver = "?"
+        print(
+            f"[marimo-precompute {_ver}] registered method='lazy_precompute' "
+            f"(loaders: {sorted(PERSISTENT_LOADERS)})",
+            file=sys.stderr,
+        )
+
+    except ImportError as e:
+        print(
+            f"[marimo-precompute] install failed: {e}",
+            file=sys.stderr,
+        )
 
 
 def flush_pending_caches() -> None:

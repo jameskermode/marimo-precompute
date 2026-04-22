@@ -120,9 +120,12 @@ async def prefetch_all() -> None:
     except Exception:
         return
 
-    for rel_path in manifest.get("files", []):
+    files = manifest.get("files", [])
+    fetched = 0
+    for rel_path in files:
         vfs = _VFS_ROOT / rel_path
         if vfs.exists() and vfs.stat().st_size > 0:
+            fetched += 1
             continue
         file_url = base + "/" + rel_path
         try:
@@ -130,8 +133,19 @@ async def prefetch_all() -> None:
             data = await resp2.bytes()
             vfs.parent.mkdir(parents=True, exist_ok=True)
             vfs.write_bytes(data)
-        except Exception:
-            pass
+            fetched += 1
+        except Exception as e:
+            import sys
+            print(
+                f"[marimo-precompute] prefetch failed for {rel_path}: {e}",
+                file=sys.stderr,
+            )
+
+    import sys
+    print(
+        f"[marimo-precompute] prefetched {fetched}/{len(files)} files to {_VFS_ROOT}",
+        file=sys.stderr,
+    )
 
 
 def write_manifest(cache_dir: Optional[str] = None) -> None:
