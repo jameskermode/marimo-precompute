@@ -1,9 +1,10 @@
 """Register LazyPrecomputeLoader in marimo's PERSISTENT_LOADERS.
 
-LazyPrecomputeLoader is a thin subclass of marimo's LazyLoader that skips
-the bytecode-hash integrity check, so caches produced in native CPython
-can be loaded in a different Python environment (e.g. Pyodide inside
-a WASM notebook).
+LazyPrecomputeLoader is a thin subclass of marimo's LazyLoader adapted
+for cross-environment static hosting. It (1) skips the bytecode-hash
+integrity check so caches produced in native CPython load in Pyodide,
+and (2) loads blobs sequentially in ``restore_cache`` because Pyodide's
+pthread-less runtime refuses ``threading.Thread.start()``.
 
 All marimo imports are inside the install() function, so this module is
 safe to import even when marimo is not installed (e.g. in Pyodide before
@@ -28,54 +29,143 @@ def install() -> None:
 
     try:
         import time
+        from pathlib import Path
 
-        from marimo._save.cache import Cache
+        import msgspec
+        from marimo._save.cache import MARIMO_CACHE_VERSION, Cache
         from marimo._save.loaders import PERSISTENT_LOADERS
-        from marimo._save.loaders.lazy import LazyLoader
+        from marimo._save.loaders.lazy import LazyLoader, from_item
         from marimo._save.loaders.loader import LoaderError
+        from marimo._save.stubs.lazy_stub import (
+            BLOB_DESERIALIZERS,
+        )
+        from marimo._save.stubs.lazy_stub import (
+            Cache as CacheSchema,
+        )
 
         class LazyPrecomputeLoader(LazyLoader):
-            """LazyLoader that tolerates cross-environment hash mismatches.
+            """LazyLoader with two Pyodide-compat tweaks.
 
-            Precompute runs in native CPython; WASM reads in Pyodide. Python
-            bytecode hashes differ between environments, so marimo's
-            integrity check in the base ``cache_attempt`` would reject the
-            loaded cache. We override it to skip the hash check while
-            keeping the variable-set check.
+            1. ``cache_attempt`` skips the bytecode-hash integrity check so
+               caches produced in native CPython load in a Pyodide runtime
+               (the two environments hash bytecode differently).
+            2. ``restore_cache`` loads blobs sequentially. Upstream spawns
+               a thread per blob; Pyodide's pthread-less runtime refuses
+               ``Thread.start()``.
             """
 
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 super().__init__(*args, **kwargs)
                 _ACTIVE_LOADERS.add(self)
 
+            def restore_cache(self, _key, blob):  # type: ignore[no-untyped-def]
+                """Sequential version of LazyLoader.restore_cache.
+
+                Loads blobs one at a time instead of spawning a thread per
+                blob, so the method works under Pyodide's pthread-less
+                runtime. Same outputs; slower on wide cache entries.
+                """
+                cache_data = msgspec.json.decode(blob, type=CacheSchema)
+
+                ref_vars: dict = {}
+                ref_type_hints: dict = {}
+                variable_hashes: dict = {}
+                base = Path(self.name) / cache_data.hash
+                for var_name, item in cache_data.defs.items():
+                    if var_name in cache_data.ui_defs:
+                        ref_vars[var_name] = (base / "ui.pickle").as_posix()
+                    elif item.reference is not None:
+                        ref_vars[var_name] = item.reference
+                        ref_type_hints[item.reference] = item.type_hint
+                    if item.hash:
+                        variable_hashes[var_name] = item.hash
+
+                return_ref = None
+                return_type_hint = None
+                if (
+                    cache_data.meta.return_value
+                    and cache_data.meta.return_value.reference
+                ):
+                    return_ref = cache_data.meta.return_value.reference
+                    return_type_hint = cache_data.meta.return_value.type_hint
+
+                unique_keys = set(ref_vars.values())
+                if return_ref:
+                    unique_keys.add(return_ref)
+
+                unpickled: dict = {}
+                for ref_key in unique_keys:
+                    data = self.store.get(ref_key)
+                    if not data:
+                        raise FileNotFoundError(
+                            f"Incomplete cache: missing blob {ref_key}"
+                        )
+                    ext = Path(ref_key).suffix
+                    deserialize = BLOB_DESERIALIZERS.get(
+                        ext, BLOB_DESERIALIZERS[".pickle"]
+                    )
+                    type_hint = ref_type_hints.get(ref_key) or (
+                        return_type_hint if ref_key == return_ref else None
+                    )
+                    unpickled[ref_key] = deserialize(data, type_hint)
+
+                defs: dict = {}
+                for var_name, item in cache_data.defs.items():
+                    if var_name in ref_vars:
+                        ref_key = ref_vars[var_name]
+                        val = unpickled.get(ref_key)
+                        if var_name in cache_data.ui_defs and isinstance(val, dict):
+                            defs[var_name] = val[var_name]
+                        else:
+                            defs[var_name] = val
+                    else:
+                        defs[var_name] = from_item(item)
+
+                if return_ref and return_ref in unpickled:
+                    return_item = unpickled[return_ref]
+                elif cache_data.meta.return_value:
+                    return_item = from_item(cache_data.meta.return_value)
+                else:
+                    return_item = None
+
+                return Cache(
+                    hash=cache_data.hash,
+                    cache_type=cache_data.cache_type.value,
+                    stateful_refs=set(cache_data.stateful_refs),
+                    defs=defs,
+                    meta={
+                        "version": cache_data.meta.version or MARIMO_CACHE_VERSION,
+                        "return": return_item,
+                        "variable_hashes": variable_hashes,
+                    },
+                    hit=True,
+                )
+
+            def load_cache(self, key):  # type: ignore[no-untyped-def]
+                # Don't silently swallow restore_cache errors — the base
+                # class's LOGGER.warning doesn't surface in Pyodide, which
+                # makes WASM cache failures invisible.
+                blob = self.store.get(str(self.build_path(key)))
+                if not blob:
+                    return None
+                try:
+                    return self.restore_cache(key, blob)
+                except Exception as e:
+                    print(
+                        f"[marimo-precompute] restore_cache failed for "
+                        f"{self.name}: {type(e).__name__}: {e}",
+                        flush=True,
+                    )
+                    return None
+
             def cache_attempt(self, defs, key, stateful_refs):  # type: ignore[no-untyped-def]
                 start_time = time.time()
                 loaded = self.load_cache(key)
                 if not loaded:
-                    print(
-                        f"[marimo-precompute] cache MISS for {self.name}/"
-                        f"{key.hash[:12]}... (expected "
-                        f"{self.build_path(key)})",
-                        flush=True,
-                    )
                     return Cache.empty(
                         defs=defs, key=key, stateful_refs=stateful_refs
                     )
                 load_time = time.time() - start_time
-
-                if loaded.hash != key.hash:
-                    print(
-                        f"[marimo-precompute] cache HIT for {self.name} "
-                        f"(stored {loaded.hash[:12]}... != local "
-                        f"{key.hash[:12]}..., patched via Cache.new)",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        f"[marimo-precompute] cache HIT for {self.name}/"
-                        f"{key.hash[:12]}...",
-                        flush=True,
-                    )
 
                 if (defs | stateful_refs) != set(loaded.defs):
                     raise LoaderError("Variable mismatch in loaded cache.")
@@ -88,17 +178,6 @@ def install() -> None:
                 )
 
         PERSISTENT_LOADERS["lazy_precompute"] = LazyPrecomputeLoader
-
-        try:
-            from importlib.metadata import version as _pkg_version
-            _ver = _pkg_version("marimo-precompute")
-        except Exception:
-            _ver = "?"
-        print(
-            f"[marimo-precompute {_ver}] registered method='lazy_precompute' "
-            f"(loaders: {sorted(PERSISTENT_LOADERS)})",
-            flush=True,
-        )
 
     except ImportError as e:
         print(f"[marimo-precompute] install failed: {e}", flush=True)
