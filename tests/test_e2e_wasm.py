@@ -2,11 +2,19 @@
 export a notebook as WASM that installs from that local wheel, and verify
 it loads in a real browser.
 
-Why build from a wheel instead of letting Pyodide fetch from PyPI? Because
-the notebook's default PEP 723 dep resolves to whatever is on PyPI at
-page-load time. That's fine for users but terrible for CI — you can ship
-a broken release and the e2e still passes against the previous good one.
-This fixture exercises the *code in this checkout*.
+The fixture is parametrised over marimo versions. Pyodide's bundled
+marimo on conda-forge lags the latest PyPI release (still 0.23.1 at the
+time of writing), and the internal APIs it exposes do not line up with
+the ones a modern dev environment has — Item.type_hint, BLOB_DESERIALIZERS,
+etc. Running the full export + WASM + Playwright flow under the minimum
+supported marimo catches compat regressions that pass against 0.23.2+
+but break every live deploy.
+
+Why build from a wheel instead of letting Pyodide fetch from PyPI?
+Because the notebook's default PEP 723 dep resolves to whatever is on
+PyPI at page-load time. That's fine for users but terrible for CI — you
+can ship a broken release and the e2e still passes against the previous
+good one. This fixture exercises the *code in this checkout*.
 
 Requires: pip install -e ".[e2e]" && playwright install chromium
 """
@@ -66,13 +74,56 @@ def _rewrite_pep723_to_local_wheel(src: Path, dst: Path, wheel_url: str) -> None
     dst.write_text(new)
 
 
-@pytest.fixture(scope="module")
-def wasm_server(tmp_path_factory):
+def _make_export_venv(tmpdir: Path, marimo_spec: str, wheel: Path) -> str:
+    """Create an isolated venv with ``marimo==marimo_spec`` + our wheel.
+
+    Returns the path to the venv's python. Used to run ``marimo export``
+    against a pinned marimo version — so the exported WASM bundle embeds
+    that version, simulating what Pyodide users hit.
+    """
+    venv = tmpdir / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(venv)],
+        check=True, capture_output=True, text=True,
+    )
+    pip = str(venv / "bin" / "pip")
+    py = str(venv / "bin" / "python")
+    subprocess.run(
+        [
+            pip, "install", "--quiet", "--disable-pip-version-check",
+            f"marimo=={marimo_spec}", str(wheel),
+            "numpy", "matplotlib",
+        ],
+        check=True, capture_output=True, text=True,
+    )
+    return py
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        # Current env's marimo. Fast, sanity check that the normal dev
+        # loop works.
+        pytest.param(None, id="current-marimo"),
+        # The oldest marimo that ships LazyLoader and that conda-forge
+        # currently serves. Matches what Pyodide loads in most live
+        # deploys. Every shipped 0.3.x regression so far has been a
+        # field this version's msgspec structs don't have.
+        pytest.param("0.23.1", id="marimo-0.23.1"),
+    ],
+)
+def wasm_server(request, tmp_path_factory):
     """Build wheel, rewrite notebook PEP 723 to install from it, export
     WASM, serve everything from a single HTTP origin, yield the URL."""
-    staging = tmp_path_factory.mktemp("wasm-e2e")
+    marimo_version = request.param
+    label = marimo_version.replace(".", "-") if marimo_version else "current"
+    staging = tmp_path_factory.mktemp(f"wasm-e2e-{label}")
 
     wheel = _build_wheel(staging)
+    if marimo_version is not None:
+        export_py = _make_export_venv(staging, marimo_version, wheel)
+    else:
+        export_py = sys.executable
 
     port = _free_port()
     dist_dir = staging / "dist"
@@ -89,12 +140,12 @@ def wasm_server(tmp_path_factory):
     # 1. Native export runs the notebook → populates public/ next to notebook
     result = subprocess.run(
         [
-            sys.executable, "-m", "marimo", "export", "html",
+            export_py, "-m", "marimo", "export", "html",
             str(modified_nb),
             "--no-include-code", "--no-sandbox",
             "-o", os.devnull,
         ],
-        capture_output=True, text=True, timeout=120, env=env,
+        capture_output=True, text=True, timeout=180, env=env,
     )
     assert result.returncode == 0, f"html export failed:\n{result.stderr}"
 
@@ -103,12 +154,12 @@ def wasm_server(tmp_path_factory):
     out_dir.mkdir()
     result = subprocess.run(
         [
-            sys.executable, "-m", "marimo", "export", "html-wasm",
+            export_py, "-m", "marimo", "export", "html-wasm",
             str(modified_nb),
             "-o", str(out_dir / "index.html"),
             "--mode", "run", "--no-show-code", "--no-sandbox", "-f",
         ],
-        capture_output=True, text=True, timeout=120, env=env,
+        capture_output=True, text=True, timeout=180, env=env,
     )
     assert result.returncode == 0, f"html-wasm export failed:\n{result.stderr}"
 
