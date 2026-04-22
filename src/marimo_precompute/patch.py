@@ -28,6 +28,8 @@ def install() -> None:
     _installed = True
 
     try:
+        import io
+        import pickle
         import time
         from pathlib import Path
 
@@ -36,12 +38,27 @@ def install() -> None:
         from marimo._save.loaders import PERSISTENT_LOADERS
         from marimo._save.loaders.lazy import LazyLoader, from_item
         from marimo._save.loaders.loader import LoaderError
-        from marimo._save.stubs.lazy_stub import (
-            BLOB_DESERIALIZERS,
-        )
-        from marimo._save.stubs.lazy_stub import (
-            Cache as CacheSchema,
-        )
+        from marimo._save.stubs.lazy_stub import Cache as CacheSchema
+
+        def _deserialize(data: bytes, ext: str, type_hint=None):
+            """Extension-based blob deserializer.
+
+            Implemented inline to support both marimo 0.23.1 (pickle only)
+            and 0.23.2+ (multi-format). In 0.23.2+ marimo exposes an
+            equivalent ``BLOB_DESERIALIZERS`` table; we avoid importing
+            it so a single build works across versions.
+            """
+            del type_hint
+            if ext == ".npy":
+                import numpy as np
+                return np.load(io.BytesIO(data), allow_pickle=False)
+            if ext == ".arrow":
+                try:
+                    import pyarrow.feather as feather
+                    return feather.read_table(io.BytesIO(data))
+                except Exception:
+                    return pickle.loads(data)
+            return pickle.loads(data)
 
         class LazyPrecomputeLoader(LazyLoader):
             """LazyLoader with two Pyodide-compat tweaks.
@@ -101,13 +118,10 @@ def install() -> None:
                             f"Incomplete cache: missing blob {ref_key}"
                         )
                     ext = Path(ref_key).suffix
-                    deserialize = BLOB_DESERIALIZERS.get(
-                        ext, BLOB_DESERIALIZERS[".pickle"]
-                    )
                     type_hint = ref_type_hints.get(ref_key) or (
                         return_type_hint if ref_key == return_ref else None
                     )
-                    unpickled[ref_key] = deserialize(data, type_hint)
+                    unpickled[ref_key] = _deserialize(data, ext, type_hint)
 
                 defs: dict = {}
                 for var_name, item in cache_data.defs.items():
@@ -179,8 +193,11 @@ def install() -> None:
 
         PERSISTENT_LOADERS["lazy_precompute"] = LazyPrecomputeLoader
 
-    except ImportError as e:
-        print(f"[marimo-precompute] install failed: {e}", flush=True)
+    except Exception as e:
+        print(
+            f"[marimo-precompute] install failed: {type(e).__name__}: {e}",
+            flush=True,
+        )
 
 
 def flush_pending_caches() -> None:
