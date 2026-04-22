@@ -93,7 +93,11 @@ def install() -> None:
                         ref_vars[var_name] = (base / "ui.pickle").as_posix()
                     elif item.reference is not None:
                         ref_vars[var_name] = item.reference
-                        ref_type_hints[item.reference] = item.type_hint
+                        # type_hint is a 0.23.2+ field; _deserialize ignores
+                        # it regardless, so default to None for 0.23.1 compat.
+                        ref_type_hints[item.reference] = getattr(
+                            item, "type_hint", None
+                        )
                     if item.hash:
                         variable_hashes[var_name] = item.hash
 
@@ -104,7 +108,9 @@ def install() -> None:
                     and cache_data.meta.return_value.reference
                 ):
                     return_ref = cache_data.meta.return_value.reference
-                    return_type_hint = cache_data.meta.return_value.type_hint
+                    return_type_hint = getattr(
+                        cache_data.meta.return_value, "type_hint", None
+                    )
 
                 unique_keys = set(ref_vars.values())
                 if return_ref:
