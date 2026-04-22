@@ -22,6 +22,7 @@ e2e = [
     "marimo>=0.23.2",
     "matplotlib",
     "playwright",
+    "build",
 ]
 
 [project.scripts]

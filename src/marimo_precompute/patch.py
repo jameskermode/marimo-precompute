@@ -172,6 +172,16 @@ def install() -> None:
                     )
                     return None
 
+            def save_cache(self, cache):  # type: ignore[no-untyped-def]
+                # In WASM, our PrecomputeStore.put() is a no-op (bundled
+                # caches are read-only). Upstream LazyLoader.save_cache
+                # spawns threads before calling put; Pyodide refuses
+                # Thread.start() so we short-circuit here to avoid a
+                # RuntimeError on legitimate cache-miss paths.
+                if getattr(self.store, "_wasm", False):
+                    return True
+                return super().save_cache(cache)
+
             def cache_attempt(self, defs, key, stateful_refs):  # type: ignore[no-untyped-def]
                 start_time = time.time()
                 loaded = self.load_cache(key)
@@ -192,6 +202,7 @@ def install() -> None:
                 )
 
         PERSISTENT_LOADERS["lazy_precompute"] = LazyPrecomputeLoader
+        print("[marimo-precompute] ready", flush=True)
 
     except Exception as e:
         print(
