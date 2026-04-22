@@ -59,28 +59,39 @@ def _rel_from_base(key: str) -> Optional[str]:
     return key
 
 
-def _fetch_bytes_wasm(key: str) -> Optional[bytes]:
-    """Read precomputed cache bytes from the Pyodide VFS, keyed by the
-    cache-relative path.
+def _resolve_vfs_path(key: str) -> Optional[pathlib.Path]:
+    """Resolve a store key to a VFS path, with a hash-insensitive fallback.
 
-    Path structure (preserved verbatim from the remote): e.g.
-    ``<name>/C_<hash>.jsonl`` or ``<name>/<hash>/forces.npy``.
+    First tries the exact path. If missing and the key looks like a
+    LazyLoader manifest (``<name>/C_<hash>.jsonl``), falls back to matching
+    any ``<name>/C_*.jsonl`` sibling — caches produced in native CPython
+    have a different bytecode hash than ones computed in Pyodide, but the
+    content is equivalent. Blob references inside the manifest use the
+    CPython-era hash and resolve exactly, so only the top-level manifest
+    lookup needs fuzzing.
     """
     rel = _rel_from_base(key)
     if rel is None:
         return None
     vfs = _VFS_ROOT / rel
     if vfs.exists() and vfs.stat().st_size > 0:
-        return vfs.read_bytes()
+        return vfs
+    if vfs.suffix == ".jsonl":
+        parent = vfs.parent
+        if parent.is_dir():
+            for candidate in sorted(parent.glob("C_*.jsonl")):
+                if candidate.stat().st_size > 0:
+                    return candidate
     return None
 
 
+def _fetch_bytes_wasm(key: str) -> Optional[bytes]:
+    vfs = _resolve_vfs_path(key)
+    return vfs.read_bytes() if vfs else None
+
+
 def _head_wasm(key: str) -> bool:
-    rel = _rel_from_base(key)
-    if rel is None:
-        return False
-    vfs = _VFS_ROOT / rel
-    return vfs.exists() and vfs.stat().st_size > 0
+    return _resolve_vfs_path(key) is not None
 
 
 async def prefetch_all() -> None:
