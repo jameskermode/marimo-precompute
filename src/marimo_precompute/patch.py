@@ -26,8 +26,6 @@ def install() -> None:
         return
     _installed = True
 
-    import sys
-
     try:
         import time
 
@@ -54,6 +52,12 @@ def install() -> None:
                 start_time = time.time()
                 loaded = self.load_cache(key)
                 if not loaded:
+                    print(
+                        f"[marimo-precompute] cache MISS for {self.name}/"
+                        f"{key.hash[:12]}... (expected "
+                        f"{self.build_path(key)})",
+                        flush=True,
+                    )
                     return Cache.empty(
                         defs=defs, key=key, stateful_refs=stateful_refs
                     )
@@ -61,9 +65,16 @@ def install() -> None:
 
                 if loaded.hash != key.hash:
                     print(
-                        f"[marimo-precompute] patching hash:"
-                        f" {loaded.hash[:20]}... -> {key.hash[:20]}...",
-                        file=sys.stderr,
+                        f"[marimo-precompute] cache HIT for {self.name} "
+                        f"(stored {loaded.hash[:12]}... != local "
+                        f"{key.hash[:12]}..., patched via Cache.new)",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[marimo-precompute] cache HIT for {self.name}/"
+                        f"{key.hash[:12]}...",
+                        flush=True,
                     )
 
                 if (defs | stateful_refs) != set(loaded.defs):
@@ -86,14 +97,11 @@ def install() -> None:
         print(
             f"[marimo-precompute {_ver}] registered method='lazy_precompute' "
             f"(loaders: {sorted(PERSISTENT_LOADERS)})",
-            file=sys.stderr,
+            flush=True,
         )
 
     except ImportError as e:
-        print(
-            f"[marimo-precompute] install failed: {e}",
-            file=sys.stderr,
-        )
+        print(f"[marimo-precompute] install failed: {e}", flush=True)
 
 
 def flush_pending_caches() -> None:

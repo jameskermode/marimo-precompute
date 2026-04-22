@@ -135,16 +135,14 @@ async def prefetch_all() -> None:
             vfs.write_bytes(data)
             fetched += 1
         except Exception as e:
-            import sys
             print(
                 f"[marimo-precompute] prefetch failed for {rel_path}: {e}",
-                file=sys.stderr,
+                flush=True,
             )
 
-    import sys
     print(
         f"[marimo-precompute] prefetched {fetched}/{len(files)} files to {_VFS_ROOT}",
-        file=sys.stderr,
+        flush=True,
     )
 
 
